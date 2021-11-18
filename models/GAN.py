@@ -1,15 +1,3 @@
-"""
--------------------------------------------------
-   File Name:    GAN.py
-   Author:       Zhonghao Huang
-   Date:         2019/10/17
-   Description:  Modified from:
-                 https://github.com/akanimax/pro_gan_pytorch
-                 https://github.com/lernapparat/lernapparat
-                 https://github.com/NVlabs/stylegan
--------------------------------------------------
-"""
-
 import copy
 import datetime
 import os
@@ -20,11 +8,9 @@ import warnings
 from collections import OrderedDict
 
 import numpy as np
-import torch
-import torch.nn as nn
+import jittor as jt
+import jittor.nn as nn
 from data import get_data_loader
-from torch.nn.functional import interpolate
-from torch.nn.modules.sparse import Embedding
 
 import models.Losses as Losses
 from models import update_average
@@ -64,8 +50,8 @@ class GMapping(nn.Module):
         self.dlatent_broadcast = dlatent_broadcast
 
         # Activation function.
-        act, gain = {'relu': (torch.relu, np.sqrt(2)),
-                     'lrelu': (nn.LeakyReLU(negative_slope=0.2), np.sqrt(2))}[mapping_nonlinearity]
+        act, gain = {'relu': (jt.relu, np.sqrt(2)),
+                     'lrelu': (nn.LeakyReLU(scale=0.2), np.sqrt(2))}[mapping_nonlinearity]
 
         # Embed labels and concatenate them with latents.
         # TODO
@@ -90,7 +76,7 @@ class GMapping(nn.Module):
         # Output.
         self.map = nn.Sequential(OrderedDict(layers))
 
-    def forward(self, x):
+    def execute(self, x):
         # First input: Latent vectors (Z) [mini_batch, latent_size].
         x = self.map(x)
 
@@ -147,8 +133,8 @@ class GSynthesis(nn.Module):
         self.num_layers = resolution_log2 * 2 - 2
         self.num_styles = self.num_layers if use_styles else 1
 
-        act, gain = {'relu': (torch.relu, np.sqrt(2)),
-                     'lrelu': (nn.LeakyReLU(negative_slope=0.2), np.sqrt(2))}[nonlinearity]
+        act, gain = {'relu': (jt.relu, np.sqrt(2)),
+                     'lrelu': (nn.LeakyReLU(scale=0.2), np.sqrt(2))}[nonlinearity]
 
         # Early layers.
         self.init_block = InputBlock(nf(1), dlatent_size, const_input_layer, gain, use_wscale,
@@ -170,9 +156,9 @@ class GSynthesis(nn.Module):
         self.to_rgb = nn.ModuleList(rgb_converters)
 
         # register the temporary upsampler
-        self.temporaryUpsampler = lambda x: interpolate(x, scale_factor=2)
+        self.temporaryUpsampler = lambda x: nn.interpolate(x, scale_factor=2, mode='nearest')
 
-    def forward(self, dlatents_in, depth=0, alpha=0., labels_in=None):
+    def execute(self, dlatents_in, depth=0, alpha=0., labels_in=None):
         """
             forward pass of the Generator
             :param dlatents_in: Input: Disentangled latents (W) [mini_batch, num_layers, dlatent_size].
@@ -244,14 +230,14 @@ class Generator(nn.Module):
         self.g_synthesis = GSynthesis(resolution=resolution, **kwargs)
 
         if truncation_psi > 0:
-            self.truncation = Truncation(avg_latent=torch.zeros(dlatent_size),
+            self.truncation = Truncation(avg_latent=jt.zeros(dlatent_size),
                                          max_layer=truncation_cutoff,
                                          threshold=truncation_psi,
                                          beta=dlatent_avg_beta)
         else:
             self.truncation = None
 
-    def forward(self, latents_in, depth, alpha, labels_in=None):
+    def execute(self, latents_in, depth, alpha, labels_in=None):
         """
         :param latents_in: First input: Latent vectors (Z) [mini_batch, latent_size].
         :param depth: current depth from where output is required
@@ -267,11 +253,11 @@ class Generator(nn.Module):
         else:
             assert labels_in is not None, "Conditional discriminatin requires labels"
             embedding = self.class_embedding(labels_in)
-            latents_in = torch.cat([latents_in, embedding], 1)
+            latents_in = jt.concat([latents_in, embedding], 1)
 
         dlatents_in = self.g_mapping(latents_in)
 
-        if self.training:
+        if self.is_training:
             # Update moving average of W(dlatent).
             # TODO
             if self.truncation is not None:
@@ -279,14 +265,14 @@ class Generator(nn.Module):
 
             # Perform style mixing regularization.
             if self.style_mixing_prob is not None and self.style_mixing_prob > 0:
-                latents2 = torch.randn(latents_in.shape).to(latents_in.device)
+                latents2 = jt.randn(latents_in.shape)
                 dlatents2 = self.g_mapping(latents2)
-                layer_idx = torch.from_numpy(np.arange(self.num_layers)[np.newaxis, :, np.newaxis]).to(
-                    latents_in.device)
+                layer_idx = jt.Var(np.arange(self.num_layers)[np.newaxis, :, np.newaxis])
                 cur_layers = 2 * (depth + 1)
                 mixing_cutoff = random.randint(1,
                                                cur_layers) if random.random() < self.style_mixing_prob else cur_layers
-                dlatents_in = torch.where(layer_idx < mixing_cutoff, dlatents_in, dlatents2)
+                mask = layer_idx < mixing_cutoff
+                dlatents_in = mask * dlatents_in + (1-mask)*dlatents2
 
             # Apply truncation trick.
             if self.truncation is not None:
@@ -343,8 +329,8 @@ class Discriminator(nn.Module):
         assert resolution == 2 ** resolution_log2 and resolution >= 4
         self.depth = resolution_log2 - 1
 
-        act, gain = {'relu': (torch.relu, np.sqrt(2)),
-                     'lrelu': (nn.LeakyReLU(negative_slope=0.2), np.sqrt(2))}[nonlinearity]
+        act, gain = {'relu': (jt.relu, np.sqrt(2)),
+                     'lrelu': (nn.LeakyReLU(scale=0.2), np.sqrt(2))}[nonlinearity]
 
         # create the remaining layers
         blocks = []
@@ -361,7 +347,7 @@ class Discriminator(nn.Module):
             if conditional:
                 r = 2 ** (res)
                 self.embeddings.append(
-                    Embedding(n_classes, (num_channels // 2) * r * r))
+                    nn.Embedding(n_classes, (num_channels // 2) * r * r))
 
         if self.conditional:
             self.embeddings.append(nn.Embedding(
@@ -381,7 +367,7 @@ class Discriminator(nn.Module):
         # register the temporary downSampler
         self.temporaryDownsampler = nn.AvgPool2d(2)
 
-    def forward(self, images_in, depth, alpha=1., labels_in=None):
+    def execute(self, images_in, depth, alpha=1., labels_in=None):
         """
         :param images_in: First input: Images [mini_batch, channel, height, width].
         :param labels_in: Second input: Labels [mini_batch, label_size].
@@ -404,7 +390,7 @@ class Discriminator(nn.Module):
                 embedding_in = embedding_in.view(images_in.shape[0], -1,
                                                  images_in.shape[2],
                                                  images_in.shape[3])
-                images_in = torch.cat([images_in, embedding_in], dim=1)
+                images_in = jt.concat([images_in, embedding_in], dim=1)
             x = self.from_rgb[0](images_in)
             for i, block in enumerate(self.blocks):
                 x = block(x)
@@ -418,7 +404,7 @@ class Discriminator(nn.Module):
                     embedding_in = embedding_in.view(images_in.shape[0], -1,
                                                      images_in.shape[2],
                                                      images_in.shape[3])
-                    images_in = torch.cat([images_in, embedding_in], dim=1)
+                    images_in = jt.concat([images_in, embedding_in], dim=1)
                     
                 residual = self.from_rgb[self.depth -
                                          depth](self.temporaryDownsampler(images_in))
@@ -434,7 +420,7 @@ class Discriminator(nn.Module):
                     embedding_in = embedding_in.view(images_in.shape[0], -1,
                                                      images_in.shape[2],
                                                      images_in.shape[3])
-                    images_in = torch.cat([images_in, embedding_in], dim=1)
+                    images_in = jt.concat([images_in, embedding_in], dim=1)
                 x = self.from_rgb[-1](images_in)
                     
             scores_out = self.final_block(x)
@@ -449,7 +435,7 @@ class StyleGAN:
     def __init__(self, structure, resolution, num_channels, latent_size,
                  g_args, d_args, g_opt_args, d_opt_args, conditional=False,
                  n_classes=0, loss="relativistic-hinge", drift=0.001, d_repeats=1,
-                 use_ema=False, ema_decay=0.999, device=torch.device("cpu")):
+                 use_ema=False, ema_decay=0.999):
         """
         Wrapper around the Generator and the Discriminator.
 
@@ -483,7 +469,6 @@ class StyleGAN:
         self.structure = structure
         self.depth = int(np.log2(resolution)) - 1
         self.latent_size = latent_size
-        self.device = device
         self.d_repeats = d_repeats
         self.conditional = conditional
         self.n_classes = n_classes
@@ -497,14 +482,14 @@ class StyleGAN:
                              structure=self.structure,
                              conditional=self.conditional,
                              n_classes=self.n_classes,
-                             **g_args).to(self.device)
+                             **g_args)
 
         self.dis = Discriminator(num_channels=num_channels,
                                  resolution=resolution,
                                  structure=self.structure,
                                  conditional=self.conditional,
                                  n_classes=self.n_classes,
-                                 **d_args).to(self.device)
+                                 **d_args)
 
         # if code is to be run on GPU, we can use DataParallel:
         # TODO
@@ -527,10 +512,10 @@ class StyleGAN:
             self.ema_updater(self.gen_shadow, self.gen, beta=0)
 
     def __setup_gen_optim(self, learning_rate, beta_1, beta_2, eps):
-        self.gen_optim = torch.optim.Adam(self.gen.parameters(), lr=learning_rate, betas=(beta_1, beta_2), eps=eps)
+        self.gen_optim = jt.optim.Adam(self.gen.parameters(), lr=learning_rate, betas=(beta_1, beta_2), eps=eps)
 
     def __setup_dis_optim(self, learning_rate, beta_1, beta_2, eps):
-        self.dis_optim = torch.optim.Adam(self.dis.parameters(), lr=learning_rate, betas=(beta_1, beta_2), eps=eps)
+        self.dis_optim = jt.optim.Adam(self.dis.parameters(), lr=learning_rate, betas=(beta_1, beta_2), eps=eps)
 
     def __setup_loss(self, loss):
         if isinstance(loss, str):
@@ -565,9 +550,6 @@ class StyleGAN:
         :return: real_samples => modified real batch of samples
         """
 
-        from torch.nn import AvgPool2d
-        from torch.nn.functional import interpolate
-
         if self.structure == 'fixed':
             return real_batch
 
@@ -575,10 +557,10 @@ class StyleGAN:
         down_sample_factor = int(np.power(2, self.depth - depth - 1))
         prior_down_sample_factor = max(int(np.power(2, self.depth - depth)), 0)
 
-        ds_real_samples = AvgPool2d(down_sample_factor)(real_batch)
+        ds_real_samples = nn.AvgPool2d(down_sample_factor)(real_batch)
 
         if depth > 0:
-            prior_ds_real_samples = interpolate(AvgPool2d(prior_down_sample_factor)(real_batch), scale_factor=2)
+            prior_ds_real_samples = nn.interpolate(nn.AvgPool2d(prior_down_sample_factor)(real_batch), scale_factor=2, mode='nearest')
         else:
             prior_ds_real_samples = ds_real_samples
 
@@ -613,10 +595,11 @@ class StyleGAN:
                 loss = self.loss.dis_loss(
                     real_samples, fake_samples, labels, depth, alpha)
             # optimize discriminator
-            self.dis_optim.zero_grad()
-            loss.backward()
-            self.dis_optim.step()
-
+            # self.dis_optim.zero_grad()
+            # loss.backward()
+            # self.dis_optim.step()
+            loss.sync()
+            self.dis_optim.step(loss)
             loss_val += loss.item()
 
         return loss_val / self.d_repeats
@@ -645,11 +628,12 @@ class StyleGAN:
                 real_samples, fake_samples, labels, depth, alpha)
 
         # optimize the generator
-        self.gen_optim.zero_grad()
-        loss.backward()
+        # self.gen_optim.zero_grad()
+        # loss.backward()
         # Gradient Clipping
-        nn.utils.clip_grad_norm_(self.gen.parameters(), max_norm=10.)
-        self.gen_optim.step()
+        # nn.utils.clip_grad_norm_(self.gen.parameters(), max_norm=10.)
+        loss.sync()
+        self.gen_optim.step(loss)
 
         # if use_ema is true, apply ema to the generator parameters
         if self.use_ema:
@@ -668,15 +652,13 @@ class StyleGAN:
         :param img_file: name of file to write
         :return: None (saves a file)
         """
-        from torch.nn.functional import interpolate
-        from torchvision.utils import save_image
-
+        
         # upsample the image
         if scale_factor > 1:
-            samples = interpolate(samples, scale_factor=scale_factor)
+            samples = nn.interpolate(samples, scale_factor=scale_factor, mode='nearest')
 
         # save the images:
-        save_image(samples, img_file, nrow=int(np.sqrt(len(samples))),
+        jt.save_image(samples, img_file, nrow=int(np.sqrt(len(samples))),
                    normalize=True, scale_each=True, pad_value=128, padding=1)
 
     def train(self, dataset, num_workers, epochs, batch_sizes, fade_in_percentage, logger, output,
@@ -716,12 +698,12 @@ class StyleGAN:
         global_time = time.time()
 
         # create fixed_input for debugging
-        fixed_input = torch.randn(num_samples, self.latent_size).to(self.device)
+        fixed_input = jt.randn(num_samples, self.latent_size)
         
         fixed_labels = None
         if self.conditional:
-            fixed_labels = torch.linspace(
-                0, self.n_classes - 1, num_samples).to(torch.int64).to(self.device)
+            fixed_labels = jt.linspace(
+                0, self.n_classes - 1, num_samples).astype(jt.int64)
         # config depend on structure
         logger.info("Starting the training process ... \n")
         if self.structure == 'fixed':
@@ -755,14 +737,12 @@ class StyleGAN:
                     # extract current batch of data for training
                     if self.conditional:
                         images, labels = batch
-                        labels = labels.to(self.device)
                     else:
                         images = batch
                         labels = None
                     
-                    images = images.to(self.device)
 
-                    gan_input = torch.randn(images.shape[0], self.latent_size).to(self.device)
+                    gan_input = jt.randn(images.shape[0], self.latent_size).stop_grad()
 
                     # optimize the discriminator:
                     dis_loss = self.optimize_discriminator(gan_input, images, current_depth, alpha, labels)
@@ -783,7 +763,7 @@ class StyleGAN:
                         gen_img_file = os.path.join(output, 'samples', "gen_" + str(current_depth)
                                                     + "_" + str(epoch) + "_" + str(i) + ".png")
 
-                        with torch.no_grad():                            
+                        with jt.no_grad():                            
                             self.create_grid(
                                 samples=self.gen(fixed_input, current_depth, alpha, labels_in=fixed_labels).detach() if not self.use_ema
                                 else self.gen_shadow(fixed_input, current_depth, alpha, labels_in=fixed_labels).detach(),
@@ -810,17 +790,17 @@ class StyleGAN:
                     dis_optim_save_file = os.path.join(
                         save_dir, "GAN_DIS_OPTIM_" + str(current_depth) + "_" + str(epoch) + ".pth")
 
-                    torch.save(self.gen.state_dict(), gen_save_file)
+                    jt.save(self.gen.state_dict(), gen_save_file)
                     logger.info("Saving the model to: %s\n" % gen_save_file)
-                    torch.save(self.dis.state_dict(), dis_save_file)
-                    torch.save(self.gen_optim.state_dict(), gen_optim_save_file)
-                    torch.save(self.dis_optim.state_dict(), dis_optim_save_file)
+                    jt.save(self.dis.state_dict(), dis_save_file)
+                    jt.save(self.gen_optim.state_dict(), gen_optim_save_file)
+                    jt.save(self.dis_optim.state_dict(), dis_optim_save_file)
 
                     # also save the shadow generator if use_ema is True
                     if self.use_ema:
                         gen_shadow_save_file = os.path.join(
                             save_dir, "GAN_GEN_SHADOW_" + str(current_depth) + "_" + str(epoch) + ".pth")
-                        torch.save(self.gen_shadow.state_dict(), gen_shadow_save_file)
+                        jt.save(self.gen_shadow.state_dict(), gen_shadow_save_file)
                         logger.info("Saving the model to: %s\n" % gen_shadow_save_file)
 
         logger.info('Training completed.\n')

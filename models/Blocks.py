@@ -1,15 +1,7 @@
-"""
--------------------------------------------------
-   File Name:    Blocks.py
-   Date:         2019/10/17
-   Description:  Copy from: https://github.com/lernapparat/lernapparat
--------------------------------------------------
-"""
-
 from collections import OrderedDict
 
-import torch
-import torch.nn as nn
+import jittor as jt
+import jittor.nn as nn
 
 from models.CustomLayers import EqualizedLinear, LayerEpilogue, EqualizedConv2d, BlurLayer, View, StddevLayer
 
@@ -31,8 +23,8 @@ class InputBlock(nn.Module):
 
         if self.const_input_layer:
             # called 'const' in tf
-            self.const = nn.Parameter(torch.ones(1, nf, 4, 4))
-            self.bias = nn.Parameter(torch.ones(nf))
+            self.const = nn.Parameter(jt.ones((1, nf, 4, 4)))
+            self.bias = nn.Parameter(jt.ones(nf))
         else:
             self.dense = EqualizedLinear(dlatent_size, nf * 16, gain=gain / 4,
                                          use_wscale=use_wscale)
@@ -44,11 +36,11 @@ class InputBlock(nn.Module):
         self.epi2 = LayerEpilogue(nf, dlatent_size, use_wscale, use_noise, use_pixel_norm, use_instance_norm,
                                   use_styles, activation_layer)
 
-    def forward(self, dlatents_in_range):
+    def execute(self, dlatents_in_range):
         batch_size = dlatents_in_range.size(0)
 
         if self.const_input_layer:
-            x = self.const.expand(batch_size, -1, -1, -1)
+            x = self.const.expand((batch_size, self.const.size(1), self.const.size(2), self.const.size(3)))
             x = x + self.bias.view(1, -1, 1, 1)
         else:
             x = self.dense(dlatents_in_range[:, 0]).view(batch_size, self.nf, 4, 4)
@@ -80,7 +72,7 @@ class GSynthesisBlock(nn.Module):
         self.epi2 = LayerEpilogue(out_channels, dlatent_size, use_wscale, use_noise, use_pixel_norm, use_instance_norm,
                                   use_styles, activation_layer)
 
-    def forward(self, x, dlatents_in_range):
+    def execute(self, x, dlatents_in_range):
         x = self.conv0_up(x)
         x = self.epi1(x, dlatents_in_range[:, 0])
         x = self.conv1(x)

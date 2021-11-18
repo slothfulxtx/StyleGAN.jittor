@@ -1,17 +1,8 @@
-"""
--------------------------------------------------
-   File Name:    CustomLayers.py
-   Date:         2019/10/17
-   Description:  Copy from: https://github.com/lernapparat/lernapparat
--------------------------------------------------
-"""
-
 import numpy as np
 from collections import OrderedDict
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import jittor as jt
+import jittor.nn as nn
 
 
 class PixelNormLayer(nn.Module):
@@ -19,20 +10,20 @@ class PixelNormLayer(nn.Module):
         super().__init__()
         self.epsilon = epsilon
 
-    def forward(self, x):
-        return x * torch.rsqrt(torch.mean(x ** 2, dim=1, keepdim=True) + self.epsilon)
+    def execute(self, x):
+        return x / jt.sqrt(jt.mean(x.sqr(), dim=1, keepdims=True) + self.epsilon)
 
 
 class Upscale2d(nn.Module):
     @staticmethod
     def upscale2d(x, factor=2, gain=1):
-        assert x.dim() == 4
+        assert x.ndim == 4
         if gain != 1:
             x = x * gain
         if factor != 1:
             shape = x.shape
             x = x.view(shape[0], shape[1], shape[2], 1, shape[3], 1).expand(-1, -1, -1, factor, -1, factor)
-            x = x.contiguous().view(shape[0], shape[1], factor * shape[2], factor * shape[3])
+            x = x.view(shape[0], shape[1], factor * shape[2], factor * shape[3])
         return x
 
     def __init__(self, factor=2, gain=1):
@@ -41,7 +32,7 @@ class Upscale2d(nn.Module):
         self.gain = gain
         self.factor = factor
 
-    def forward(self, x):
+    def execute(self, x):
         return self.upscale2d(x, factor=self.factor, gain=self.gain)
 
 
@@ -57,10 +48,10 @@ class Downscale2d(nn.Module):
         else:
             self.blur = None
 
-    def forward(self, x):
-        assert x.dim() == 4
+    def execute(self, x):
+        assert x.ndim == 4
         # 2x2, float32 => downscale using _blur2d().
-        if self.blur is not None and x.dtype == torch.float32:
+        if self.blur is not None and x.dtype == jt.float32:
             return self.blur(x)
 
         # Apply gain.
@@ -73,7 +64,7 @@ class Downscale2d(nn.Module):
 
         # Large factor => downscale using tf.nn.avg_pool().
         # NOTE: Requires tf_config['graph_options.place_pruned_graph']=True to work.
-        return F.avg_pool2d(x, self.factor)
+        return nn.avg_pool2d(x, self.factor)
 
 
 class EqualizedLinear(nn.Module):
@@ -89,18 +80,18 @@ class EqualizedLinear(nn.Module):
         else:
             init_std = he_std / lrmul
             self.w_mul = lrmul
-        self.weight = torch.nn.Parameter(torch.randn(output_size, input_size) * init_std)
+        self.weight = jt.nn.Parameter(jt.randn(output_size, input_size) * init_std)
         if bias:
-            self.bias = torch.nn.Parameter(torch.zeros(output_size))
+            self.bias = jt.nn.Parameter(jt.zeros(output_size))
             self.b_mul = lrmul
         else:
             self.bias = None
 
-    def forward(self, x):
+    def execute(self, x):
         bias = self.bias
         if bias is not None:
             bias = bias * self.b_mul
-        return F.linear(x, self.weight * self.w_mul, bias)
+        return nn.matmul_transpose(x, self.weight * self.w_mul) + bias
 
 
 class EqualizedConv2d(nn.Module):
@@ -125,16 +116,16 @@ class EqualizedConv2d(nn.Module):
         else:
             init_std = he_std / lrmul
             self.w_mul = lrmul
-        self.weight = torch.nn.Parameter(
-            torch.randn(output_channels, input_channels, kernel_size, kernel_size) * init_std)
+        self.weight = jt.nn.Parameter(
+            jt.randn(output_channels, input_channels, kernel_size, kernel_size) * init_std)
         if bias:
-            self.bias = torch.nn.Parameter(torch.zeros(output_channels))
+            self.bias = jt.nn.Parameter(jt.zeros(output_channels))
             self.b_mul = lrmul
         else:
             self.bias = None
         self.intermediate = intermediate
 
-    def forward(self, x):
+    def execute(self, x):
         bias = self.bias
         if bias is not None:
             bias = bias * self.b_mul
@@ -146,9 +137,9 @@ class EqualizedConv2d(nn.Module):
             w = self.weight * self.w_mul
             w = w.permute(1, 0, 2, 3)
             # probably applying a conv on w would be more efficient. also this quadruples the weight (average)?!
-            w = F.pad(w, [1, 1, 1, 1])
+            w = nn.pad(w, [1, 1, 1, 1])
             w = w[:, :, 1:, 1:] + w[:, :, :-1, 1:] + w[:, :, 1:, :-1] + w[:, :, :-1, :-1]
-            x = F.conv_transpose2d(x, w, stride=2, padding=(w.size(-1) - 1) // 2)
+            x = nn.conv_transpose2d(x, w, stride=2, padding=(w.size(-1) - 1) // 2)
             have_convolution = True
         elif self.upscale is not None:
             x = self.upscale(x)
@@ -157,10 +148,10 @@ class EqualizedConv2d(nn.Module):
         intermediate = self.intermediate
         if downscale is not None and min(x.shape[2:]) >= 128:
             w = self.weight * self.w_mul
-            w = F.pad(w, [1, 1, 1, 1])
+            w = nn.pad(w, [1, 1, 1, 1])
             # in contrast to upscale, this is a mean...
             w = (w[:, :, 1:, 1:] + w[:, :, :-1, 1:] + w[:, :, 1:, :-1] + w[:, :, :-1, :-1]) * 0.25  # avg_pool?
-            x = F.conv2d(x, w, stride=2, padding=(w.size(-1) - 1) // 2)
+            x = nn.conv2d(x, w, stride=2, padding=(w.size(-1) - 1) // 2)
             have_convolution = True
             downscale = None
         elif downscale is not None:
@@ -168,9 +159,9 @@ class EqualizedConv2d(nn.Module):
             intermediate = downscale
 
         if not have_convolution and intermediate is None:
-            return F.conv2d(x, self.weight * self.w_mul, bias, padding=self.kernel_size // 2)
+            return nn.conv2d(x, self.weight * self.w_mul, bias, padding=self.kernel_size // 2)
         elif not have_convolution:
-            x = F.conv2d(x, self.weight * self.w_mul, None, padding=self.kernel_size // 2)
+            x = nn.conv2d(x, self.weight * self.w_mul, None, padding=self.kernel_size // 2)
 
         if intermediate is not None:
             x = intermediate(x)
@@ -185,12 +176,12 @@ class NoiseLayer(nn.Module):
 
     def __init__(self, channels):
         super().__init__()
-        self.weight = nn.Parameter(torch.zeros(channels))
+        self.weight = nn.Parameter(jt.zeros(channels))
         self.noise = None
 
-    def forward(self, x, noise=None):
+    def execute(self, x, noise=None):
         if noise is None and self.noise is None:
-            noise = torch.randn(x.size(0), 1, x.size(2), x.size(3), device=x.device, dtype=x.dtype)
+            noise = jt.randn(x.size(0), 1, x.size(2), x.size(3), dtype=x.dtype)
         elif noise is None:
             # here is a little trick: if you get all the noise layers and set each
             # modules .noise attribute, you can have pre-defined noise.
@@ -207,10 +198,10 @@ class StyleMod(nn.Module):
                                    channels * 2,
                                    gain=1.0, use_wscale=use_wscale)
 
-    def forward(self, x, latent):
+    def execute(self, x, latent):
         style = self.lin(latent)  # style => [batch_size, n_channels*2]
 
-        shape = [-1, 2, x.size(1)] + (x.dim() - 2) * [1]
+        shape = [-1, 2, x.size(1)] + (x.ndim - 2) * [1]
         style = style.view(shape)  # [batch_size, 2, n_channels, ...]
         x = x * (style[:, 0] + 1.) + style[:, 1]
         return x
@@ -230,7 +221,7 @@ class LayerEpilogue(nn.Module):
         if use_pixel_norm:
             layers.append(('pixel_norm', PixelNormLayer()))
         if use_instance_norm:
-            layers.append(('instance_norm', nn.InstanceNorm2d(channels)))
+            layers.append(('instance_norm', nn.InstanceNorm2d(channels, affine=False)))
 
         self.top_epi = nn.Sequential(OrderedDict(layers))
 
@@ -239,7 +230,7 @@ class LayerEpilogue(nn.Module):
         else:
             self.style_mod = None
 
-    def forward(self, x, dlatents_in_slice=None):
+    def execute(self, x, dlatents_in_slice=None):
         x = self.top_epi(x)
         if self.style_mod is not None:
             x = self.style_mod(x, dlatents_in_slice)
@@ -253,20 +244,20 @@ class BlurLayer(nn.Module):
         super(BlurLayer, self).__init__()
         if kernel is None:
             kernel = [1, 2, 1]
-        kernel = torch.tensor(kernel, dtype=torch.float32)
-        kernel = kernel[:, None] * kernel[None, :]
-        kernel = kernel[None, None]
+        kernel = jt.Var(kernel, dtype=jt.float32)
+        kernel = kernel.unsqueeze(1) * kernel.unsqueeze(0)
+        kernel = kernel.unsqueeze(0).unsqueeze(0)
         if normalize:
             kernel = kernel / kernel.sum()
         if flip:
             kernel = kernel[:, :, ::-1, ::-1]
-        self.register_buffer('kernel', kernel)
+        self._kernel = kernel
         self.stride = stride
 
-    def forward(self, x):
+    def execute(self, x):
         # expand kernel channels
         kernel = self.kernel.expand(x.size(1), -1, -1, -1)
-        x = F.conv2d(
+        x = nn.conv2d(
             x,
             kernel,
             stride=self.stride,
@@ -281,7 +272,7 @@ class View(nn.Module):
         super().__init__()
         self.shape = shape
 
-    def forward(self, x):
+    def execute(self, x):
         return x.view(x.size(0), *self.shape)
 
 
@@ -291,17 +282,17 @@ class StddevLayer(nn.Module):
         self.group_size = group_size
         self.num_new_features = num_new_features
 
-    def forward(self, x):
+    def execute(self, x):
         b, c, h, w = x.shape
         group_size = min(self.group_size, b)
         y = x.reshape([group_size, -1, self.num_new_features,
                        c // self.num_new_features, h, w])
-        y = y - y.mean(0, keepdim=True)
-        y = (y ** 2).mean(0, keepdim=True)
-        y = (y + 1e-8) ** 0.5
-        y = y.mean([3, 4, 5], keepdim=True).squeeze(3)  # don't keep the meaned-out channels
+        y = y - y.mean(0, keepdims=True)
+        y = (y.sqr()).mean(0, keepdims=True)
+        y = (y + 1e-8).pow(0.5)
+        y = y.mean([3, 4, 5], keepdims=True).squeeze(3)  # don't keep the meaned-out channels
         y = y.expand(group_size, -1, -1, h, w).clone().reshape(b, self.num_new_features, h, w)
-        z = torch.cat([x, y], dim=1)
+        z = jt.concat([x, y], dim=1)
         return z
 
 
@@ -311,13 +302,13 @@ class Truncation(nn.Module):
         self.max_layer = max_layer
         self.threshold = threshold
         self.beta = beta
-        self.register_buffer('avg_latent', avg_latent)
+        self._avg_latent = avg_latent
 
     def update(self, last_avg):
-        self.avg_latent.copy_(self.beta * self.avg_latent + (1. - self.beta) * last_avg)
+        self._avg_latent.update(self.beta * self._avg_latent + (1. - self.beta) * last_avg)
 
-    def forward(self, x):
-        assert x.dim() == 3
-        interp = torch.lerp(self.avg_latent, x, self.threshold)
-        do_trunc = (torch.arange(x.size(1)) < self.max_layer).view(1, -1, 1).to(x.device)
-        return torch.where(do_trunc, interp, x)
+    def execute(self, x):
+        assert x.ndim == 3
+        interp = self._avg_latent + self.threshold * (x - self._avg_latent)
+        do_trunc = (jt.arange(x.size(1)) < self.max_layer).view(1, -1, 1)
+        return do_trunc * interp + (1 - do_trunc) * x
