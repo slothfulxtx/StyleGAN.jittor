@@ -1,21 +1,11 @@
-"""
--------------------------------------------------
-   File Name:    datasets.py
-   Author:       Zhonghao Huang
-   Date:         2019/10/22
-   Description:  Module for the data loading
-                 pipeline for the model to train.
--------------------------------------------------
-"""
-
 import os
 import numpy as np
 
-from torch.utils.data import Dataset
+from jittor.dataset import Dataset
 
 
 class FlatDirectoryImageDataset(Dataset):
-    """ pyTorch Dataset wrapper for the generic flat directory images dataset """
+    """ jittor Dataset wrapper for the generic flat directory images dataset """
 
     def __setup_files(self):
         """
@@ -39,19 +29,15 @@ class FlatDirectoryImageDataset(Dataset):
         :param data_dir: path to the directory containing the data
         :param transform: transforms to be applied to the images
         """
+        super().__init__()
         # define the state of the object
         self.data_dir = data_dir
         self.transform = transform
 
         # setup the files for reading
         self.files = self.__setup_files()
-
-    def __len__(self):
-        """
-        compute the length of the dataset
-        :return: len => length of dataset
-        """
-        return len(self.files)
+        self.total_len = len(self.files)
+        self.set_attrs(total_len=len(self.files))
 
     def __getitem__(self, idx):
         """
@@ -114,19 +100,15 @@ class FoldersDistributedDataset(Dataset):
         :param data_dir: path to the directory containing the data
         :param transform: transforms to be applied to the images
         """
+        super().__init__()
         # define the state of the object
         self.data_dir = data_dir
         self.transform = transform
 
         # setup the files for reading
         self.files = self.__setup_files()
-
-    def __len__(self):
-        """
-        compute the length of the dataset
-        :return: len => length of dataset
-        """
-        return len(self.files)
+        self.total_len = len(self.files)
+        self.set_attrs(total_len=len(self.files))
 
     def __getitem__(self, idx):
         """
