@@ -1,12 +1,3 @@
-"""
--------------------------------------------------
-   File Name:    config.py
-   Author:       Zhonghao Huang
-   Date:         2019/10/22
-   Description:  Global Configure.
--------------------------------------------------
-"""
-
 from yacs.config import CfgNode as CN
 
 cfg = CN()

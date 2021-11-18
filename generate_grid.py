@@ -11,8 +11,8 @@ import os
 import argparse
 import numpy as np
 
-import torch
-from torchvision.utils import save_image
+import jittor as jt
+from jittor.misc import save_image
 
 from models.GAN import Generator
 
@@ -54,7 +54,7 @@ def adjust_dynamic_range(data, drange_in=(-1, 1), drange_out=(0, 1)):
                 np.float32(drange_in[1]) - np.float32(drange_in[0]))
         bias = (np.float32(drange_out[0]) - np.float32(drange_in[0]) * scale)
         data = data * scale + bias
-    return torch.clamp(data, min=0, max=1)
+    return jt.clamp(data, min=0, max=1)
 
 
 def main(args):
@@ -78,7 +78,7 @@ def main(args):
 
     print("Loading the generator weights from:", args.generator_file)
     # load the weights into it
-    gen.load_state_dict(torch.load(args.generator_file))
+    gen.load_state_dict(jt.load(args.generator_file))
 
     # path for saving the files:
     save_path = args.output_dir
@@ -88,8 +88,8 @@ def main(args):
 
     print("Generating scale synchronized images ...")
     # generate the images:
-    with torch.no_grad():
-        point = torch.randn(args.n_row * args.n_col, latent_size)
+    with jt.no_grad():
+        point = jt.randn(args.n_row * args.n_col, latent_size)
         point = (point / point.norm()) * (latent_size ** 0.5)
         ss_image = gen(point, depth=out_depth, alpha=1)
         # color adjust the generated image:

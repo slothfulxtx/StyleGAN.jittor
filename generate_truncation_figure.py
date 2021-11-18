@@ -1,17 +1,8 @@
-"""
--------------------------------------------------
-   File Name:    generate_truncation_figure.py
-   Author:       Zhonghao Huang
-   Date:         2019/11/23
-   Description:  
--------------------------------------------------
-"""
-
 import argparse
 import numpy as np
 from PIL import Image
 
-import torch
+import jittor as jt
 
 from generate_grid import adjust_dynamic_range
 from models.GAN import Generator
@@ -21,16 +12,16 @@ def draw_truncation_trick_figure(png, gen, out_depth, seeds, psis):
     w = h = 2 ** (out_depth + 2)
     latent_size = gen.g_mapping.latent_size
 
-    with torch.no_grad():
+    with jt.no_grad():
         latents_np = np.stack([np.random.RandomState(seed).randn(latent_size) for seed in seeds])
-        latents = torch.from_numpy(latents_np.astype(np.float32))
+        latents = jt.array(latents_np.astype(np.float32))
         dlatents = gen.g_mapping(latents).detach().numpy()  # [seed, layer, component]
         dlatent_avg = gen.truncation.avg_latent.numpy()  # [component]
 
         canvas = Image.new('RGB', (w * len(psis), h * len(seeds)), 'white')
         for row, dlatent in enumerate(list(dlatents)):
             row_dlatents = (dlatent[np.newaxis] - dlatent_avg) * np.reshape(psis, [-1, 1, 1]) + dlatent_avg
-            row_dlatents = torch.from_numpy(row_dlatents.astype(np.float32))
+            row_dlatents = jt.array(row_dlatents.astype(np.float32))
             row_images = gen.g_synthesis(row_dlatents, depth=out_depth, alpha=1)
             for col, image in enumerate(list(row_images)):
                 image = adjust_dynamic_range(image)
@@ -60,7 +51,7 @@ def main(args):
 
     print("Loading the generator weights from:", args.generator_file)
     # load the weights into it
-    gen.load_state_dict(torch.load(args.generator_file))
+    gen.load_state_dict(jt.load(args.generator_file))
 
     draw_truncation_trick_figure('figure08-truncation-trick.png', gen, out_depth=5,
                                  seeds=[91, 388], psis=[1, 0.7, 0.5, 0, -0.5, -1])

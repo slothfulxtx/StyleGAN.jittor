@@ -3,7 +3,7 @@ import argparse
 import numpy as np
 from PIL import Image
 
-import torch
+import jittor as jt
 
 from models.GAN import Generator
 from generate_grid import adjust_dynamic_range
@@ -13,12 +13,12 @@ def draw_style_mixing_figure(png, gen, out_depth, src_seeds, dst_seeds, style_ra
     n_col = len(src_seeds)
     n_row = len(dst_seeds)
     w = h = 2 ** (out_depth + 2)
-    with torch.no_grad():
+    with jt.no_grad():
         latent_size = gen.g_mapping.latent_size
         src_latents_np = np.stack([np.random.RandomState(seed).randn(latent_size, ) for seed in src_seeds])
         dst_latents_np = np.stack([np.random.RandomState(seed).randn(latent_size, ) for seed in dst_seeds])
-        src_latents = torch.from_numpy(src_latents_np.astype(np.float32))
-        dst_latents = torch.from_numpy(dst_latents_np.astype(np.float32))
+        src_latents = jt.array(src_latents_np.astype(np.float32))
+        dst_latents = jt.array(dst_latents_np.astype(np.float32))
         src_dlatents = gen.g_mapping(src_latents)  # [seed, layer, component]
         dst_dlatents = gen.g_mapping(dst_latents)  # [seed, layer, component]
         src_images = gen.g_synthesis(src_dlatents, depth=out_depth, alpha=1)
@@ -38,7 +38,7 @@ def draw_style_mixing_figure(png, gen, out_depth, src_seeds, dst_seeds, style_ra
 
             row_dlatents = np.stack([dst_dlatents_np[row]] * n_col)
             row_dlatents[:, style_ranges[row]] = src_dlatents_np[:, style_ranges[row]]
-            row_dlatents = torch.from_numpy(row_dlatents)
+            row_dlatents = jt.array(row_dlatents)
 
             row_images = gen.g_synthesis(row_dlatents, depth=out_depth, alpha=1)
             for col, image in enumerate(list(row_images)):
@@ -69,7 +69,7 @@ def main(args):
 
     print("Loading the generator weights from:", args.generator_file)
     # load the weights into it
-    gen.load_state_dict(torch.load(args.generator_file))
+    gen.load_state_dict(jt.load(args.generator_file))
 
     # path for saving the files:
     # generate the images:

@@ -1,19 +1,10 @@
-"""
--------------------------------------------------
-   File Name:    generate_samples.py
-   Date:         2019/10/27
-   Description:  Generate single image samples from a particular depth of a model
-                 Modified from: https://github.com/akanimax/pro_gan_pytorch
--------------------------------------------------
-"""
-
 import os
 import argparse
 import numpy as np
 from tqdm import tqdm
 
-import torch
-from torchvision.utils import save_image
+import jittor as jt
+from jittor.misc import save_image
 
 from models.GAN import Generator
 
@@ -57,7 +48,7 @@ def adjust_dynamic_range(data, drange_in=(-1, 1), drange_out=(0, 1)):
                 np.float32(drange_in[1]) - np.float32(drange_in[0]))
         bias = (np.float32(drange_out[0]) - np.float32(drange_in[0]) * scale)
         data = data * scale + bias
-    return torch.clamp(data, min=0, max=1)
+    return jt.clamp(data, min=0, max=1)
 
 
 def main(args):
@@ -81,7 +72,7 @@ def main(args):
 
     print("Loading the generator weights from:", args.generator_file)
     # load the weights into it
-    gen.load_state_dict(torch.load(args.generator_file))
+    gen.load_state_dict(jt.load(args.generator_file))
 
     # path for saving the files:
     save_path = args.output_dir
@@ -93,8 +84,8 @@ def main(args):
         print("Generating scale synchronized images ...")
         for img_num in tqdm(range(1, args.num_samples + 1)):
             # generate the images:
-            with torch.no_grad():
-                point = torch.randn(1, latent_size)
+            with jt.no_grad():
+                point = jt.randn(1, latent_size)
                 point = (point / point.norm()) * (latent_size ** 0.5)
                 ss_image = gen(point, depth=out_depth, alpha=1)
                 # color adjust the generated image:
@@ -106,7 +97,7 @@ def main(args):
         print("Generated %d images at %s" % (args.num_samples, save_path))
     else:
         code = np.load(args.input)
-        dlatent_in = torch.unsqueeze(torch.from_numpy(code), 0)
+        dlatent_in = jt.unsqueeze(jt.array(code), 0)
         ss_image = gen.g_synthesis(dlatent_in, depth=out_depth, alpha=1)
         # color adjust the generated image:
         ss_image = adjust_dynamic_range(ss_image)
