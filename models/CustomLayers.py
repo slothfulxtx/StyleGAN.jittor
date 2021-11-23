@@ -244,7 +244,7 @@ class BlurLayer(nn.Module):
         super(BlurLayer, self).__init__()
         if kernel is None:
             kernel = [1, 2, 1]
-        kernel = jt.Var(kernel, dtype=jt.float32)
+        kernel = jt.array(kernel, dtype=jt.float32)
         kernel = kernel.unsqueeze(1) * kernel.unsqueeze(0)
         kernel = kernel.unsqueeze(0).unsqueeze(0)
         if normalize:
@@ -256,12 +256,12 @@ class BlurLayer(nn.Module):
 
     def execute(self, x):
         # expand kernel channels
-        kernel = self.kernel.expand(x.size(1), -1, -1, -1)
+        kernel = self._kernel.expand(x.size(1), -1, -1, -1)
         x = nn.conv2d(
             x,
             kernel,
             stride=self.stride,
-            padding=int((self.kernel.size(2) - 1) / 2),
+            padding=int((self._kernel.size(2) - 1) / 2),
             groups=x.size(1)
         )
         return x

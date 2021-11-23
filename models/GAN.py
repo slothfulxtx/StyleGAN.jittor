@@ -50,7 +50,7 @@ class GMapping(nn.Module):
         self.dlatent_broadcast = dlatent_broadcast
 
         # Activation function.
-        act, gain = {'relu': (jt.relu, np.sqrt(2)),
+        act, gain = {'relu': (nn.relu, np.sqrt(2)),
                      'lrelu': (nn.LeakyReLU(scale=0.2), np.sqrt(2))}[mapping_nonlinearity]
 
         # Embed labels and concatenate them with latents.
@@ -133,7 +133,7 @@ class GSynthesis(nn.Module):
         self.num_layers = resolution_log2 * 2 - 2
         self.num_styles = self.num_layers if use_styles else 1
 
-        act, gain = {'relu': (jt.relu, np.sqrt(2)),
+        act, gain = {'relu': (nn.relu, np.sqrt(2)),
                      'lrelu': (nn.LeakyReLU(scale=0.2), np.sqrt(2))}[nonlinearity]
 
         # Early layers.
@@ -179,7 +179,9 @@ class GSynthesis(nn.Module):
             x = self.init_block(dlatents_in[:, 0:2])
 
             if depth > 0:
-                for i, block in enumerate(self.blocks[:depth - 1]):
+                for i, block in enumerate(self.blocks):
+                    if i >= depth-1:
+                        break
                     x = block(x, dlatents_in[:, 2 * (i + 1):2 * (i + 2)])
 
                 residual = self.to_rgb[depth - 1](self.temporaryUpsampler(x))
@@ -267,7 +269,7 @@ class Generator(nn.Module):
             if self.style_mixing_prob is not None and self.style_mixing_prob > 0:
                 latents2 = jt.randn(latents_in.shape)
                 dlatents2 = self.g_mapping(latents2)
-                layer_idx = jt.Var(np.arange(self.num_layers)[np.newaxis, :, np.newaxis])
+                layer_idx = jt.array(np.arange(self.num_layers)[np.newaxis, :, np.newaxis])
                 cur_layers = 2 * (depth + 1)
                 mixing_cutoff = random.randint(1,
                                                cur_layers) if random.random() < self.style_mixing_prob else cur_layers
@@ -329,7 +331,7 @@ class Discriminator(nn.Module):
         assert resolution == 2 ** resolution_log2 and resolution >= 4
         self.depth = resolution_log2 - 1
 
-        act, gain = {'relu': (jt.relu, np.sqrt(2)),
+        act, gain = {'relu': (nn.relu, np.sqrt(2)),
                      'lrelu': (nn.LeakyReLU(scale=0.2), np.sqrt(2))}[nonlinearity]
 
         # create the remaining layers
@@ -412,7 +414,9 @@ class Discriminator(nn.Module):
                                        1](self.from_rgb[self.depth - depth - 1](images_in))
                 x = (alpha * straight) + ((1 - alpha) * residual)
 
-                for block in self.blocks[(self.depth - depth):]:
+                for i, block in enumerate(self.blocks):
+                    if i < self.depth - depth:
+                        continue 
                     x = block(x)
             else:
                 if self.conditional:
@@ -659,9 +663,9 @@ class StyleGAN:
 
         # save the images:
         jt.save_image(samples, img_file, nrow=int(np.sqrt(len(samples))),
-                   normalize=True, scale_each=True, pad_value=128, padding=1)
+                   normalize=True, scale_each=False, pad_value=128, padding=1)
 
-    def train(self, dataset, num_workers, epochs, batch_sizes, fade_in_percentage, logger, output,
+    def train(self, dataset_cfg, num_workers, epochs, batch_sizes, fade_in_percentage, logger, output,
                           num_samples=36, start_depth=0, feedback_factor=100, checkpoint_factor=1):
         """
         Utility method for training the GAN. Note that you don't have to necessarily use this
@@ -718,7 +722,7 @@ class StyleGAN:
 
             # Choose training parameters and configure training ops.
             # TODO
-            data = get_data_loader(dataset, batch_sizes[current_depth], num_workers)
+            data = get_data_loader(dataset_cfg, batch_sizes[current_depth], num_workers)
 
             for epoch in range(1, epochs[current_depth] + 1):
                 start = timeit.default_timer()  # record time at the start of epoch
@@ -783,12 +787,12 @@ class StyleGAN:
                 if epoch % checkpoint_factor == 0 or epoch == 1 or epoch == epochs[current_depth]:
                     save_dir = os.path.join(output, 'models')
                     os.makedirs(save_dir, exist_ok=True)
-                    gen_save_file = os.path.join(save_dir, "GAN_GEN_" + str(current_depth) + "_" + str(epoch) + ".pth")
-                    dis_save_file = os.path.join(save_dir, "GAN_DIS_" + str(current_depth) + "_" + str(epoch) + ".pth")
+                    gen_save_file = os.path.join(save_dir, "GAN_GEN_" + str(current_depth) + "_" + str(epoch) + ".pkl")
+                    dis_save_file = os.path.join(save_dir, "GAN_DIS_" + str(current_depth) + "_" + str(epoch) + ".pkl")
                     gen_optim_save_file = os.path.join(
-                        save_dir, "GAN_GEN_OPTIM_" + str(current_depth) + "_" + str(epoch) + ".pth")
+                        save_dir, "GAN_GEN_OPTIM_" + str(current_depth) + "_" + str(epoch) + ".pkl")
                     dis_optim_save_file = os.path.join(
-                        save_dir, "GAN_DIS_OPTIM_" + str(current_depth) + "_" + str(epoch) + ".pth")
+                        save_dir, "GAN_DIS_OPTIM_" + str(current_depth) + "_" + str(epoch) + ".pkl")
 
                     jt.save(self.gen.state_dict(), gen_save_file)
                     logger.info("Saving the model to: %s\n" % gen_save_file)
@@ -799,7 +803,7 @@ class StyleGAN:
                     # also save the shadow generator if use_ema is True
                     if self.use_ema:
                         gen_shadow_save_file = os.path.join(
-                            save_dir, "GAN_GEN_SHADOW_" + str(current_depth) + "_" + str(epoch) + ".pth")
+                            save_dir, "GAN_GEN_SHADOW_" + str(current_depth) + "_" + str(epoch) + ".pkl")
                         jt.save(self.gen_shadow.state_dict(), gen_shadow_save_file)
                         logger.info("Saving the model to: %s\n" % gen_shadow_save_file)
 

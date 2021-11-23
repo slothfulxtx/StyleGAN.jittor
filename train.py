@@ -50,7 +50,7 @@ if __name__ == '__main__':
     os.makedirs(output_dir)
 
     # copy codes and config file
-    files = list_dir_recursively_with_ignore('.', ignores=['diagrams', 'configs'])
+    files = list_dir_recursively_with_ignore('.', ignores=['diagrams', 'configs', 'dataset'])
     files = [(f[0], os.path.join(output_dir, "src", f[1])) for f in files]
     copy_files_and_create_dirs(files)
     shutil.copy2(args.config, output_dir)
@@ -66,7 +66,7 @@ if __name__ == '__main__':
         jt.flags.use_cuda = True
 
     # create the dataset for training
-    dataset = make_dataset(opt.dataset, conditional=opt.conditional)
+    # dataset = make_dataset(opt.dataset, conditional=opt.conditional)
 
     # init the network
     style_gan = StyleGAN(
@@ -116,7 +116,7 @@ if __name__ == '__main__':
 
     # train the network
     style_gan.train(
-        dataset=dataset,
+        dataset_cfg=opt.dataset,
         num_workers=opt.num_works,
         epochs=opt.sched.epochs,
         batch_sizes=opt.sched.batch_sizes,

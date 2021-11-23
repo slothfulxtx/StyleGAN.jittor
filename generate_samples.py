@@ -48,7 +48,7 @@ def adjust_dynamic_range(data, drange_in=(-1, 1), drange_out=(0, 1)):
                 np.float32(drange_in[1]) - np.float32(drange_in[0]))
         bias = (np.float32(drange_out[0]) - np.float32(drange_in[0]) * scale)
         data = data * scale + bias
-    return jt.clamp(data, min=0, max=1)
+    return jt.clamp(data, min_v=0, max_v=1)
 
 
 def main(args):
@@ -92,7 +92,7 @@ def main(args):
                 ss_image = adjust_dynamic_range(ss_image)
 
             # save the ss_image in the directory
-            save_image(ss_image, os.path.join(save_path, str(img_num) + ".png"))
+            save_image(jt.array(ss_image[0]), os.path.join(save_path, str(img_num) + ".png"), nrow=1, padding=0)
 
         print("Generated %d images at %s" % (args.num_samples, save_path))
     else:
@@ -101,7 +101,7 @@ def main(args):
         ss_image = gen.g_synthesis(dlatent_in, depth=out_depth, alpha=1)
         # color adjust the generated image:
         ss_image = adjust_dynamic_range(ss_image)
-        save_image(ss_image, args.output)
+        save_image(jt.array(ss_image[0]), args.output)
 
 
 if __name__ == '__main__':

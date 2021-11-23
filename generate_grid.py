@@ -54,7 +54,7 @@ def adjust_dynamic_range(data, drange_in=(-1, 1), drange_out=(0, 1)):
                 np.float32(drange_in[1]) - np.float32(drange_in[0]))
         bias = (np.float32(drange_out[0]) - np.float32(drange_in[0]) * scale)
         data = data * scale + bias
-    return jt.clamp(data, min=0, max=1)
+    return jt.clamp(data, min_v=0, max_v=1)
 
 
 def main(args):
@@ -97,7 +97,7 @@ def main(args):
 
     # save the ss_image in the directory
     save_image(ss_image, os.path.join(save_path, "grid.png"), nrow=args.n_row,
-               normalize=True, scale_each=True, pad_value=128, padding=1)
+               normalize=True, scale_each=False, pad_value=128, padding=1)
 
     print('Done.')
 

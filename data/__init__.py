@@ -2,12 +2,14 @@ from data.datasets import FlatDirectoryImageDataset, FoldersDistributedDataset
 from data.transforms import get_transform
 
 
-def make_dataset(cfg):
-    
-    if cfg.folder:
-        Dataset = FoldersDistributedDataset 
+def make_dataset(cfg, conditional=False):
+    if conditional:
+        assert False
     else:
-        Dataset = FlatDirectoryImageDataset
+        if cfg.folder:
+            Dataset = FoldersDistributedDataset 
+        else:
+            Dataset = FlatDirectoryImageDataset
     
     transforms = get_transform(new_size=(cfg.resolution, cfg.resolution))
     _dataset = Dataset(cfg.img_dir, transform=transforms)
@@ -15,7 +17,7 @@ def make_dataset(cfg):
     return _dataset
 
 
-def get_data_loader(dataset, batch_size, num_workers):
+def get_data_loader(cfg, batch_size, num_workers):
     """
     generate the data_loader from the given dataset
     :param dataset: dataset for training (Should be a PyTorch dataset)
@@ -25,6 +27,8 @@ def get_data_loader(dataset, batch_size, num_workers):
     :return: dl => data_loader for the dataset
     """
     
+    dataset = make_dataset(cfg)
+
     dl = dataset.set_attrs(
         batch_size=batch_size,
         shuffle=True,
