@@ -6,9 +6,7 @@ This repo is an Jittor implementation of StyleGAN, which heavily uses [StyleGAN.
 - yacs
 - tqdm
 - numpy
-- torch
-- torchvision
-- tensorflow(Optional, for ./convert.py)
+- jittor
 
 
 ## Reference
